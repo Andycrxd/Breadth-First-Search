@@ -1,119 +1,241 @@
-import random
 from collections import deque
-import matplotlib.pyplot as plt
+import cv2
 import numpy as np
 import pandas as pd
 
+# 1. Cargar el laberinto 150x150 desde el CSV
+matriz = pd.read_csv("laberinto_150x150.csv", header=None).values
+filas, columnas = matriz.shape
 
-# 1. ALGORITMO BFS (PROPUESTA CON RASTREO DE PADRES)
-def resolver_laberinto_bfs(matriz, inicio, destino):
-    filas, columnas = matriz.shape
+# Filtrar casillas transitables (valor 0)
+celdas_libres = [tuple(coord) for coord in np.argwhere(matriz == 0)]
+TOTAL_TRANSITABLES = len(celdas_libres)  # Son 10,951 celdas libres
 
-    # Estructuras principales de BFS
-    frontera = deque([inicio])  # Cola FIFO
-    visitados = {inicio}  # Conjunto de explorados (reached)
-    padres = {}  # Rastreo de ruta: padres[(r,c)] = (r_anterior, c_anterior)
 
-    # Movimientos ortogonales: Arriba, Abajo, Izquierda, Derecha
+def solicitar_coordenada(nombre_punto):
+    """Solicita una coordenada (fila, columna) y valida que sea un camino transitable (0)."""
+    while True:
+        try:
+            print(f"\n--- Ingrese las coordenadas para {nombre_punto} ---")
+            r = int(input(f"Fila (0 a {filas-1}): "))
+            c = int(input(f"Columna (0 a {columnas-1}): "))
+
+            if not (0 <= r < filas and 0 <= c < columnas):
+                print(
+                    f" Error: La coordenada ({r}, {c}) está fuera del rango [0..{filas-1}]."
+                )
+                continue
+
+            if matriz[r, c] != 0:
+                print(
+                    f" Error: La coordenada ({r}, {c}) es una PARED (valor 1). Elige una casilla libre."
+                )
+                continue
+
+            return (r, c)
+        except ValueError:
+            print(" Error: Ingrese números enteros válidos.")
+
+
+# Configuración de renderizado
+FACTOR_ESCALA = 4  # Ventana de 600x600 píxeles
+DURACION_OBJETIVO_SEG = 15.0
+FPS = 30
+DELAY_MS = int(1000 / FPS)
+
+while True:
+    print("\n" + "=" * 55)
+    print("      CONFIGURACIÓN DE PRUEBA - BFS LABERINTO 150x150")
+    print("=" * 55)
+
+    inicio = solicitar_coordenada("PUNTO INICIAL (VERDE)")
+    destino = solicitar_coordenada("PUNTO DESTINO (ROSA/MAGENTA)")
+
+    if inicio == destino:
+        print(
+            "\n El punto inicial y el destino son el mismo. Intente de nuevo."
+        )
+        continue
+
+    print(
+        f"\nIniciando BFS desde {inicio} hasta {destino} (~15s de animación)..."
+    )
+
+    # 2. Ejecución del Algoritmo BFS
+    frontera = deque([inicio])
+    visitados = {inicio}
+    padres = {}
+    orden_exploracion = []
+    meta_alcanzada = False
+
     movimientos = [(-1, 0), (1, 0), (0, -1), (0, 1)]
 
-    encontrado = False
-
     while frontera:
-        actual = frontera.popleft()  # Extraer el primer elemento (FIFO)
+        actual = frontera.popleft()
+        orden_exploracion.append(actual)
 
         if actual == destino:
-            encontrado = True
+            meta_alcanzada = True
             break
 
         r, c = actual
-
         for dr, dc in movimientos:
             nr, nc = r + dr, c + dc
-
-            # Validar: 1) Dentro de límites, 2) Es camino libre (0), 3) No visitado
             if 0 <= nr < filas and 0 <= nc < columnas and matriz[nr, nc] == 0:
                 if (nr, nc) not in visitados:
                     visitados.add((nr, nc))
-                    padres[(nr, nc)] = (r, c)  # Guardar la procedencia
+                    padres[(nr, nc)] = (r, c)
                     frontera.append((nr, nc))
 
-    if not encontrado:
-        return None, len(visitados)
-
-    # Reconstrucción de la ruta desde el destino hasta el inicio
+    # Reconstrucción de la ruta
     camino = []
-    paso = destino
-    while paso in padres:
-        camino.append(paso)
-        paso = padres[paso]
-    camino.append(inicio)
-    camino.reverse()  # Ordenar de Origen a Destino
+    if meta_alcanzada:
+        curr = destino
+        while curr in padres:
+            camino.append(curr)
+            curr = padres[curr]
+        camino.append(inicio)
+        camino.reverse()
 
-    return camino, len(visitados)
+    # 3. Canvas base
+    img = np.zeros((filas, columnas, 3), dtype=np.uint8)
+    img[matriz == 1] = [0, 0, 0]  # Paredes: Negro
+    img[matriz == 0] = [255, 255, 255]  # Caminos: Blanco
 
+    img[inicio[0], inicio[1]] = [0, 255, 0]  # Inicio: Verde
+    img[destino[0], destino[1]] = [255, 0, 255]  # Destino: Rosa
 
-# 2. CARGA DE DATOS Y DEFINICIÓN DE PUNTOS
-# Cargar el laberinto desde el CSV
-laberinto = pd.read_csv("laberinto_150x150.csv", header=None).values
+    total_pasos = len(orden_exploracion)
+    total_cuadros = int(DURACION_OBJETIVO_SEG * FPS)
+    pasos_por_cuadro = max(1, total_pasos // total_cuadros)
 
-# Encontrar celdas libres (valor 0) para elegir puntos aleatorios válidos
-celdas_libres = [tuple(coord) for coord in np.argwhere(laberinto == 0)]
+    # 4. Animación paso a paso
+    usuario_salio = False
+    for i in range(0, total_pasos, pasos_por_cuadro):
+        bloque = orden_exploracion[i : i + pasos_por_cuadro]
 
-# Seleccionar 2 puntos aleatorios dentro del laberinto
-inicio, destino = random.sample(celdas_libres, 2)
+        for r, c in bloque:
+            if (r, c) != inicio and (r, c) != destino:
+                img[r, c] = [235, 180, 100]  # Visitados: Azul claro
 
-print(f"Dimensiones de la matriz: {laberinto.shape}")
-print(f"Punto de Inicio: {inicio}")
-print(f"Punto Destino: {destino}")
+        r_act, c_act = bloque[-1]
+        if (r_act, c_act) != inicio and (r_act, c_act) != destino:
+            img[r_act, c_act] = [50, 50, 255]  # Frontera: Rojo
 
-# 3. EJECUCIÓN DE BFS Y GENERACIÓN DE RESULTADOS
-camino, casillas_exploradas = resolver_laberinto_bfs(
-    laberinto, inicio, destino
-)
+        frame = cv2.resize(
+            img,
+            (columnas * FACTOR_ESCALA, filas * FACTOR_ESCALA),
+            interpolation=cv2.INTER_NEAREST,
+        )
+        cv2.imshow("BFS Laberinto 150x150 - En Ejecucion", frame)
 
-if camino:
-    print(f"¡Ruta encontrada exitosamente!")
-    print(f"Longitud del camino: {len(camino) - 1} pasos")
-    print(f"Total de casillas exploradas por BFS: {casillas_exploradas}")
-else:
-    print("No se encontró una ruta posible entre los dos puntos.")
+        tecla = cv2.waitKey(DELAY_MS) & 0xFF
+        if tecla == ord("q") or tecla == 27:
+            usuario_salio = True
+            break
 
-# 4. VISUALIZACIÓN GRAFICA DE LA SOLUCIÓN
-plt.figure(figsize=(10, 10))
+    if usuario_salio:
+        break
 
-# Dibuja paredes en negro (1) y caminos en blanco (0)
-plt.imshow(laberinto, cmap="binary")
+    # 5. Colorear Ruta Óptima y Actualizar Pantalla
+    if meta_alcanzada:
+        for r, c in camino:
+            if (r, c) != inicio and (r, c) != destino:
+                img[r, c] = [0, 215, 255]  # Ruta final: Dorado
 
-# Trazar la ruta encontrada por BFS si existe
-if camino:
-    filas_camino = [p[0] for p in camino]
-    cols_camino = [p[1] for p in camino]
+        img[inicio[0], inicio[1]] = [0, 255, 0]
+        img[destino[0], destino[1]] = [255, 0, 255]
 
-    # Dibujar la línea de la solución sobre el laberinto
-    plt.plot(
-        cols_camino,
-        filas_camino,
-        color="gold",
-        linewidth=2,
-        label=f"Camino BFS ({len(camino)-1} pasos)",
+    # Generar el cuadro final resuelto
+    frame_final = cv2.resize(
+        img,
+        (columnas * FACTOR_ESCALA, filas * FACTOR_ESCALA),
+        interpolation=cv2.INTER_NEAREST,
     )
 
-# Dibujar los puntos de Inicio (Verde) y Destino (Rojo)
-plt.plot(inicio[1], inicio[0], "go", markersize=9, label=f"Inicio: {inicio}")
-plt.plot(
-    destino[1], destino[0], "ro", markersize=9, label=f"Destino: {destino}"
-)
+    # Cálculos de porcentaje corregidos
+    pct_caminos = (len(visitados) / TOTAL_TRANSITABLES) * 100
+    pct_matriz_total = (len(visitados) / (filas * columnas)) * 100
 
-plt.title(
-    f"Laberinto 150x150 - Solución BFS\nCasillas exploradas por el algoritmo: {casillas_exploradas}",
-    fontsize=12,
-)
-plt.xlabel("Columna (X)")
-plt.ylabel("Fila (Y)")
-plt.legend(loc="upper right")
-plt.tight_layout()
+    # Texto superpuesto en la imagen
+    txt_nodos = (
+        f"Explorados: {len(visitados)} / {TOTAL_TRANSITABLES} ({pct_caminos:.1f}% de caminos)"
+    )
+    txt_pasos = (
+        f"Pasos del camino: {len(camino)-1}"
+        if meta_alcanzada
+        else "Sin camino disponible"
+    )
 
-# Guardar la imagen final resuelta
-plt.savefig("laberinto_solucion_bfs.png", dpi=200)
-plt.show()
+    cv2.putText(
+        frame_final,
+        txt_nodos,
+        (15, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (0, 0, 0),
+        3,
+    )
+    cv2.putText(
+        frame_final,
+        txt_nodos,
+        (15, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 255, 255),
+        1,
+    )
+    cv2.putText(
+        frame_final,
+        txt_pasos,
+        (15, 55),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (0, 0, 0),
+        3,
+    )
+    cv2.putText(
+        frame_final,
+        txt_pasos,
+        (15, 55),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (0, 255, 255),
+        1,
+    )
+
+    # Mostrar marco final
+    cv2.imshow("BFS Laberinto 150x150 - En Ejecucion", frame_final)
+
+    # IMPRIMIR MÉTRICAS EN CONSOLA
+    print("\n" + "=" * 55)
+    print("              RESULTADOS DE LA BÚSQUEDA")
+    print("=" * 55)
+    print(f"Punto Inicial:                 {inicio}")
+    print(f"Punto Destino:                 {destino}")
+    print(
+        f"Nodos explorados:              {len(visitados)} de {TOTAL_TRANSITABLES} celdas libres"
+    )
+    print(f"Porcentaje de caminos libres:  {pct_caminos:.2f}%")
+    print(
+        f"Porcentaje de matriz total:    {pct_matriz_total:.2f}% (incluyendo paredes)"
+    )
+
+    if meta_alcanzada:
+        print(f"Estado:                        ÉXITO")
+        print(f"Longitud del camino óptimo:    {len(camino) - 1} pasos")
+    else:
+        print(f"Estado:                        FRACASO (Sin ruta)")
+
+    print(
+        "\n Presione CUALQUIER TECLA dentro de la ventana de OpenCV para continuar..."
+    )
+
+    # FORZAR A OPENCV A PROCESAR EL EVENTO DE DIBUJO Y ESPERAR UN CLIC/TECLA EN LA VENTANA
+    cv2.waitKey(0)
+
+    respuesta = input("\n¿Desea ingresar otro par de coordenadas? (s/n): ")
+    if respuesta.lower() != "s":
+        break
+
+cv2.destroyAllWindows()
